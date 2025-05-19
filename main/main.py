@@ -6,6 +6,7 @@ from audio_preprocessing import load_audio, extract_features, load_wav2vec2
 from emotion_recognition_model import load_model
 from speech_to_text import SpeechToText
 from language_model import LanguageModel
+from text_to_speech import TextToSpeech
 
 class VoiceMoodTreeHole:
     """
@@ -17,6 +18,7 @@ class VoiceMoodTreeHole:
     _intensity_encoder = None
     _stt_model = None
     _language_model = None
+    _tts_model = None
     _device = None
     _models_loaded = False
     
@@ -61,6 +63,10 @@ class VoiceMoodTreeHole:
             print("正在加载大语言模型...")
             cls._language_model = LanguageModel(use_deepseek=False)  # 使用Qwen_1.8B模型
             
+            # 初始化TTS模型
+            print("正在加载TTS模型...")
+            cls._tts_model = TextToSpeech()
+            
             cls._models_loaded = True
             print("所有模型已加载完成")
             
@@ -83,6 +89,7 @@ class VoiceMoodTreeHole:
         cls._intensity_encoder = None
         cls._stt_model = None
         cls._language_model = None
+        cls._tts_model = None
         
         # 清理GPU内存
         if torch.cuda.is_available():
@@ -221,6 +228,18 @@ class VoiceMoodTreeHole:
         print("正在生成回应...")
         response = self.generate_response(text, emotion, intensity)
         
+        # 生成语音回应
+        print("正在生成语音回应...")
+        response_audio_path = None
+        try:
+            response_audio_path = VoiceMoodTreeHole._tts_model.synthesize_speech(
+                response,
+                output_filename=f"{os.path.basename(audio_path).split('.')[0]}_response"
+            )
+        except Exception as e:
+            print(f"生成语音回应时出错: {str(e)}")
+            print("继续处理，但不生成语音")
+        
         # 构造结果
         result = {
             "text": text,
@@ -228,6 +247,10 @@ class VoiceMoodTreeHole:
             "intensity": intensity,
             "response": response
         }
+        
+        # 如果成功生成语音，添加到结果中
+        if response_audio_path:
+            result["response_audio"] = response_audio_path
         
         # 保存结果
         output_file = os.path.join(self.output_dir, f"{os.path.basename(audio_path).split('.')[0]}_result.json")
