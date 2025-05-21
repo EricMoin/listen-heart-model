@@ -1,2 +1,15 @@
 # Large model output files
-model/output/ravdess_features.pkl 
+fastspeech/
+finetune/
+logs/
+__pycache__/
+*.pth
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pkl
+*.wav
+*.ckpt
+test/

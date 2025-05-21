@@ -1,0 +1,121 @@
+import shutil
+import tempfile
+import os
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import JSONResponse
+import sys
+
+# Add the main directory to the Python path
+# current_handler_dir is 'backend/'
+current_handler_dir = os.path.dirname(os.path.abspath(__file__))
+# project_root is 'listen-heart-model/'
+project_root = os.path.dirname(current_handler_dir)
+# main_code_dir is 'listen-heart-model/main/'
+main_code_dir = os.path.join(project_root, "main")
+
+# Add the 'main' directory itself to sys.path so that main.py and its sibling modules
+# (like audio_preprocessing.py) can be imported directly.
+if main_code_dir not in sys.path:
+    sys.path.insert(0, main_code_dir)
+
+# Import the main class
+# VoiceMoodTreeHole is in main.py, which is in main_code_dir.
+# Since main_code_dir is in sys.path, main.py is importable as 'main'.
+try:
+    from main import VoiceMoodTreeHole
+except ImportError as e:
+    print(
+        f"Error importing VoiceMoodTreeHole from 'main.py' in '{main_code_dir}': {e}")
+    print(f"Current sys.path: {sys.path}")
+    # As a fallback, ensure project_root is also in path and try the old import style
+    # This might indicate a more complex packaging or __init__.py situation in 'main'
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)  # Ensure project root is also in path
+
+    print(f"Retrying import with 'from main.main import VoiceMoodTreeHole'...")
+    try:
+        from main.main import VoiceMoodTreeHole
+        print("Fallback import 'from main.main import VoiceMoodTreeHole' succeeded.")
+    except ImportError as e2:
+        print(f"Fallback import also failed: {e2}")
+        print("Please check the Python path and ensure 'main/main.py' exists and is correctly structured.")
+        raise e  # Raise the original error if fallback also fails
+
+
+app = FastAPI()
+
+# Global variable to hold the model instance
+assistant = None
+
+
+@app.on_event("startup")
+async def startup_event():
+    global assistant
+    print("Loading models...")
+    try:
+        # Load models. This class method loads them into class variables.
+        VoiceMoodTreeHole.load_models()
+        # Create an instance of the assistant
+        assistant = VoiceMoodTreeHole()
+        print("Models loaded successfully.")
+    except Exception as e:
+        print(f"Error loading models during startup: {e}")
+        assistant = None
+
+
+@app.post("/analyze_audio/")
+async def analyze_audio(file: UploadFile = File(...)):
+    global assistant
+    if assistant is None or not VoiceMoodTreeHole._models_loaded:
+        raise HTTPException(
+            status_code=503, detail="Models are not loaded or failed to load. Please check server logs.")
+
+    tmp_path = None  # Initialize tmp_path to ensure it's defined in finally block
+    try:
+        # Create a temporary file to save the uploaded audio
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+
+        print(f"Processing audio file: {tmp_path}")
+        # Process the audio file
+        result = assistant.process_audio(tmp_path)
+
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+
+        return JSONResponse(content=result)
+
+    except FileNotFoundError as e:
+        print(f"FileNotFoundError during processing: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"A required file was not found: {e}")
+    except Exception as e:
+        print(f"Error processing audio: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, detail=f"An internal error occurred: {str(e)}")
+    finally:
+        # Clean up the temporary file
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        # Close the uploaded file
+        await file.close()
+
+
+@app.get("/")
+async def root():
+    return {"message": "VoiceMoodTreeHole API is running. Use /analyze_audio/ to process audio."}
+
+if __name__ == "__main__":
+    import uvicorn
+    # The sys.path modification at the top of the file ensures that 'main' module
+    # and its internal imports work correctly when running this handler directly.
+
+    print("Starting Uvicorn server for handler.py...")
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"sys.path includes: {main_code_dir}")
+    print("Make sure the 'models' directory is correctly placed relative to the 'main' directory (e.g., '../models' from 'main/main.py').")
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
